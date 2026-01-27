@@ -2,3 +2,8 @@ streamlit
 transformers
 torch
 scipy
+numpy
+librosa
+joblib
+pathlib
+huggingface_hub
