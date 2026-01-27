@@ -77,9 +77,9 @@ if audio_file is not None:
         tmp_file.write(audio_file.getvalue())
         tmp_path = tmp_file.name
 
-    # Run Dog Detection
+    # Run Dog Detection (get top 100 for detailed analysis)
     with st.spinner("Listening for barks..."):
-        results = dog_detector(tmp_path)
+        results = dog_detector(tmp_path, top_k=100)
 
     # Logic: Check if "Dog" or "Bark" is in the top 5 predictions
     # AudioSet labels include 'Dog', 'Bark', 'Growling', etc.
@@ -129,7 +129,11 @@ if audio_file is not None:
     # Clean up temp file
     os.remove(tmp_path)
 
-    # Show raw detection results
+    # Show detailed detection results as bar graph
     with st.expander("See detailed dog detection analysis"):
-        st.write(results)
+        for result in results:
+            label = result['label']
+            score = result['score']
+            st.write(f"**{label}:** {score:.2%}")
+            st.progress(score)
 
