@@ -13,7 +13,7 @@ st.title("🐶 Dog Bark Detector & Breed Classifier")
 st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
 
 # Hugging Face model repository for breed classifier
-HF_REPO_ID = "dlln-dvs/dogspeak-breed-classifier"
+HF_REPO_ID = "dllndvs/dogspeak-breed-classifier"
 HF_MODEL_FILENAME = "random_forest_model.joblib"
 LOCAL_MODEL_CACHE = Path("./model_cache")
 
