@@ -7,7 +7,7 @@ import librosa
 import joblib
 import logging
 from pathlib import Path
-from huggingface_hub import hf_hub_download, InferenceClient
+from huggingface_hub import hf_hub_download
 
 # Configure logging
 logging.basicConfig(
@@ -34,23 +34,6 @@ BREED_MODEL_OPTIONS = {
     "YouTube AST (Fine-tuned)": "youtube_ast"
 }
 
-# --- Inference Client ---
-
-@st.cache_resource
-def get_inference_client():
-    """Get HuggingFace Inference Client (uses HF_TOKEN from secrets if available)."""
-    try:
-        token = st.secrets.get("HF_TOKEN", None)
-        logger.info(f"HF_TOKEN loaded: {'Yes' if token else 'No'}")
-        if token:
-            logger.info(f"Token prefix: {token[:10]}...")
-    except Exception as e:
-        logger.warning(f"Could not read secrets: {e}")
-        token = None
-    # Explicitly set provider to avoid StopIteration error in provider auto-detection
-    client = InferenceClient(token=token, provider="hf-inference")
-    logger.info(f"InferenceClient created with provider='hf-inference': {client}")
-    return client
 
 
 # --- Audio Processing ---
@@ -121,6 +104,34 @@ def load_yt_rf_breed_classifier():
         return None
 
 
+@st.cache_resource
+def load_ast_breed_classifier():
+    """Load fine-tuned AST model for breed classification (local)."""
+    logger.info(f"Loading AST breed classifier: {HF_AST_REPO_ID}")
+    try:
+        model = pipeline("audio-classification", model=HF_AST_REPO_ID)
+        logger.info("AST breed classifier loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Could not load AST breed classifier: {e}")
+        st.warning(f"Could not load AST breed classifier: {e}")
+        return None
+
+
+@st.cache_resource
+def load_yt_ast_breed_classifier():
+    """Load YouTube fine-tuned AST model for breed classification (local)."""
+    logger.info(f"Loading YouTube AST breed classifier: {HF_YT_AST_REPO_ID}")
+    try:
+        model = pipeline("audio-classification", model=HF_YT_AST_REPO_ID)
+        logger.info("YouTube AST breed classifier loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Could not load YouTube AST breed classifier: {e}")
+        st.warning(f"Could not load YouTube AST breed classifier: {e}")
+        return None
+
+
 # --- Dog Detection (Local) ---
 
 def detect_dog(audio_path, detector):
@@ -186,73 +197,27 @@ def classify_breed_with_rf(audio_path, classifier):
     return breed_pred, max(breed_proba), sorted_results
 
 
-def classify_breed_with_ast_api(audio_path, model_id, client, max_retries=3):
+def classify_breed_with_ast(audio_path, classifier):
     """
-    Classify breed using AST model via HuggingFace Inference API.
+    Classify breed using AST model (local).
     Returns (predicted_breed, confidence, results_list) or (None, None, None) on failure.
-    Includes retry logic for model cold starts.
     """
-    import time
-    from huggingface_hub.utils import HfHubHTTPError
+    try:
+        results = classifier(audio_path, top_k=100)
 
-    with open(audio_path, "rb") as f:
-        audio_bytes = f.read()
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            response = client.audio_classification(
-                audio=audio_bytes,
-                model=model_id,
-            )
-
-            # Ensure response is a list and handle empty/None responses
-            if response is None:
-                return None, None, None
-
-            # Convert to list if it's a generator/iterator
-            response_list = list(response) if not isinstance(response, list) else response
-
-            if not response_list:
-                return None, None, None
-
-            # Convert API response to consistent format
-            results = []
-            for r in response_list:
-                if hasattr(r, 'label') and hasattr(r, 'score'):
-                    results.append({"label": r.label, "score": r.score})
-                elif isinstance(r, dict):
-                    results.append({"label": r.get('label', ''), "score": r.get('score', 0.0)})
-
-            if not results:
-                return None, None, None
-
-            breed_pred = results[0]['label']
-            confidence = results[0]['score']
-            sorted_results = [(r['label'], r['score']) for r in results]
-
-            return breed_pred, confidence, sorted_results
-
-        except HfHubHTTPError as e:
-            last_error = e
-            error_str = str(e)
-            # Model is loading (cold start) - wait and retry
-            if "loading" in error_str.lower() or "503" in error_str:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10
-                    st.info(f"Model is warming up... retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
-            st.error(f"Breed classification API error: {type(e).__name__}: {e}")
+        if not results:
             return None, None, None
 
-        except Exception as e:
-            last_error = e
-            st.error(f"Breed classification error: {type(e).__name__}: {e}")
-            return None, None, None
+        breed_pred = results[0]['label']
+        confidence = results[0]['score']
+        sorted_results = [(r['label'], r['score']) for r in results]
 
-    st.error(f"Breed classification failed after {max_retries} attempts: {last_error}")
-    return None, None, None
+        return breed_pred, confidence, sorted_results
+
+    except Exception as e:
+        logger.error(f"AST breed classification error: {type(e).__name__}: {e}")
+        st.error(f"Breed classification error: {e}")
+        return None, None, None
 
 
 def display_breed_results(breed_pred, confidence, sorted_results):
@@ -267,7 +232,7 @@ def display_breed_results(breed_pred, confidence, sorted_results):
             st.progress(prob)
 
 
-def run_breed_classification(audio_path, model_type, model_name, client):
+def run_breed_classification(audio_path, model_type, model_name):
     """Run breed classification based on selected model type."""
     breed_pred, confidence, sorted_results = None, None, None
 
@@ -286,14 +251,18 @@ def run_breed_classification(audio_path, model_type, model_name, client):
         breed_pred, confidence, sorted_results = classify_breed_with_rf(audio_path, classifier)
 
     elif model_type == "ast":
-        breed_pred, confidence, sorted_results = classify_breed_with_ast_api(
-            audio_path, HF_AST_REPO_ID, client
-        )
+        classifier = load_ast_breed_classifier()
+        if classifier is None:
+            st.warning(f"{model_name} not available.")
+            return
+        breed_pred, confidence, sorted_results = classify_breed_with_ast(audio_path, classifier)
 
     elif model_type == "youtube_ast":
-        breed_pred, confidence, sorted_results = classify_breed_with_ast_api(
-            audio_path, HF_YT_AST_REPO_ID, client
-        )
+        classifier = load_yt_ast_breed_classifier()
+        if classifier is None:
+            st.warning(f"{model_name} not available.")
+            return
+        breed_pred, confidence, sorted_results = classify_breed_with_ast(audio_path, classifier)
 
     if breed_pred is None:
         st.warning("Could not classify breed.")
@@ -308,10 +277,7 @@ def main():
     st.title("🐶 Dog Bark Detector & Breed Classifier")
     st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
 
-    # Get inference client (for AST breed classifiers)
-    client = get_inference_client()
-
-    # Load dog detector locally (MIT model doesn't have free Inference API)
+    # Load dog detector
     dog_detector = load_dog_detector()
 
     # Model selection dropdown
@@ -344,7 +310,7 @@ def main():
 
             # Breed classification
             with st.spinner(f"Identifying breed using {selected_model_name}..."):
-                run_breed_classification(tmp_path, selected_model_type, selected_model_name, client)
+                run_breed_classification(tmp_path, selected_model_type, selected_model_name)
         else:
             st.error("🚫 **No Dog Detected.**")
 
