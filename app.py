@@ -95,38 +95,62 @@ def load_yt_rf_breed_classifier():
 
 # --- Dog Detection (via Inference API) ---
 
-def detect_dog_via_api(audio_path, client):
+def detect_dog_via_api(audio_path, client, max_retries=3):
     """
     Run dog detection on audio file via HuggingFace Inference API.
     Returns (is_detected, confidence, full_results)
+    Includes retry logic for model cold starts.
     """
-    try:
-        with open(audio_path, "rb") as f:
-            audio_bytes = f.read()
+    import time
+    from huggingface_hub.utils import HfHubHTTPError
 
-        results = client.audio_classification(
-            audio=audio_bytes,
-            model=HF_DOG_DETECTOR_ID,
-        )
+    with open(audio_path, "rb") as f:
+        audio_bytes = f.read()
 
-        # Convert API response to consistent format
-        results = [{"label": r.label, "score": r.score} for r in results]
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            results = client.audio_classification(
+                audio=audio_bytes,
+                model=HF_DOG_DETECTOR_ID,
+            )
 
-        top_labels = [result['label'] for result in results[:5]]
-        scores = {result['label']: result['score'] for result in results[:5]}
+            # Convert API response to consistent format
+            results = [{"label": r.label, "score": r.score} for r in results]
 
-        is_detected = any(
-            keyword in label
-            for label in top_labels
-            for keyword in ['Dog', 'Bark', 'Puppy']
-        )
-        confidence = scores.get('Dog', scores.get('Bark', 0.0))
+            top_labels = [result['label'] for result in results[:5]]
+            scores = {result['label']: result['score'] for result in results[:5]}
 
-        return is_detected, confidence, results
+            is_detected = any(
+                keyword in label
+                for label in top_labels
+                for keyword in ['Dog', 'Bark', 'Puppy']
+            )
+            confidence = scores.get('Dog', scores.get('Bark', 0.0))
 
-    except Exception as e:
-        st.error(f"Dog detection API error: {e}")
-        return False, 0.0, []
+            return is_detected, confidence, results
+
+        except HfHubHTTPError as e:
+            last_error = e
+            error_str = str(e)
+            # Model is loading (cold start) - wait and retry
+            if "loading" in error_str.lower() or "503" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 10  # 10s, 20s, 30s
+                    st.info(f"Model is warming up... retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+            # Other HTTP error - don't retry
+            st.error(f"Dog detection API error: {type(e).__name__}: {e}")
+            return False, 0.0, []
+
+        except Exception as e:
+            last_error = e
+            st.error(f"Dog detection error: {type(e).__name__}: {e}")
+            return False, 0.0, []
+
+    st.error(f"Dog detection failed after {max_retries} attempts: {last_error}")
+    return False, 0.0, []
 
 
 def display_dog_detection_results(results):
@@ -161,35 +185,58 @@ def classify_breed_with_rf(audio_path, classifier):
     return breed_pred, max(breed_proba), sorted_results
 
 
-def classify_breed_with_ast_api(audio_path, model_id, client):
+def classify_breed_with_ast_api(audio_path, model_id, client, max_retries=3):
     """
     Classify breed using AST model via HuggingFace Inference API.
     Returns (predicted_breed, confidence, results_list) or (None, None, None) on failure.
+    Includes retry logic for model cold starts.
     """
-    try:
-        with open(audio_path, "rb") as f:
-            audio_bytes = f.read()
+    import time
+    from huggingface_hub.utils import HfHubHTTPError
 
-        results = client.audio_classification(
-            audio=audio_bytes,
-            model=model_id,
-        )
+    with open(audio_path, "rb") as f:
+        audio_bytes = f.read()
 
-        if not results:
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            results = client.audio_classification(
+                audio=audio_bytes,
+                model=model_id,
+            )
+
+            if not results:
+                return None, None, None
+
+            # Convert API response to consistent format
+            results = [{"label": r.label, "score": r.score} for r in results]
+
+            breed_pred = results[0]['label']
+            confidence = results[0]['score']
+            sorted_results = [(r['label'], r['score']) for r in results]
+
+            return breed_pred, confidence, sorted_results
+
+        except HfHubHTTPError as e:
+            last_error = e
+            error_str = str(e)
+            # Model is loading (cold start) - wait and retry
+            if "loading" in error_str.lower() or "503" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 10
+                    st.info(f"Model is warming up... retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+            st.error(f"Breed classification API error: {type(e).__name__}: {e}")
             return None, None, None
 
-        # Convert API response to consistent format
-        results = [{"label": r.label, "score": r.score} for r in results]
+        except Exception as e:
+            last_error = e
+            st.error(f"Breed classification error: {type(e).__name__}: {e}")
+            return None, None, None
 
-        breed_pred = results[0]['label']
-        confidence = results[0]['score']
-        sorted_results = [(r['label'], r['score']) for r in results]
-
-        return breed_pred, confidence, sorted_results
-
-    except Exception as e:
-        st.error(f"Breed classification API error: {e}")
-        return None, None, None
+    st.error(f"Breed classification failed after {max_retries} attempts: {last_error}")
+    return None, None, None
 
 
 def display_breed_results(breed_pred, confidence, sorted_results):
