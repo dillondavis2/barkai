@@ -46,8 +46,9 @@ def get_inference_client():
     except Exception as e:
         logger.warning(f"Could not read secrets: {e}")
         token = None
-    client = InferenceClient(token=token)
-    logger.info(f"InferenceClient created: {client}")
+    # Explicitly set provider to avoid StopIteration error in provider auto-detection
+    client = InferenceClient(token=token, provider="hf-inference")
+    logger.info(f"InferenceClient created with provider='hf-inference': {client}")
     return client
 
 
