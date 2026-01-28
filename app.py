@@ -12,10 +12,17 @@ from huggingface_hub import hf_hub_download
 st.title("🐶 Dog Bark Detector & Breed Classifier")
 st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
 
-# Hugging Face model repository for breed classifier
-HF_REPO_ID = "dllndvs/dogspeak-breed-classifier"
-HF_MODEL_FILENAME = "random_forest_model.joblib"
+# Hugging Face model repositories for breed classifiers
+HF_RF_REPO_ID = "dllndvs/dogspeak-breed-classifier"
+HF_RF_MODEL_FILENAME = "random_forest_model.joblib"
+HF_AST_REPO_ID = "dllndvs/dogspeak-ast-breed-classifier"
 LOCAL_MODEL_CACHE = Path("./model_cache")
+
+# Model selection options
+BREED_MODEL_OPTIONS = {
+    "Random Forest (MFCC features)": "random_forest",
+    "Dogspeak AST (Fine-tuned)": "ast"
+}
 
 def extract_mfcc_features(file_path):
     """
@@ -49,21 +56,37 @@ def load_dog_detector():
     return pipeline("audio-classification", model="MIT/ast-finetuned-audioset-10-10-0.4593")
 
 @st.cache_resource
-def load_breed_classifier():
+def load_rf_breed_classifier():
     # Download and load trained random forest model from Hugging Face Hub
     try:
         model_path = hf_hub_download(
-            repo_id=HF_REPO_ID,
-            filename=HF_MODEL_FILENAME,
+            repo_id=HF_RF_REPO_ID,
+            filename=HF_RF_MODEL_FILENAME,
             cache_dir=LOCAL_MODEL_CACHE,
         )
         return joblib.load(model_path)
     except Exception as e:
-        st.warning(f"Could not load breed classifier: {e}")
+        st.warning(f"Could not load Random Forest breed classifier: {e}")
+        return None
+
+@st.cache_resource
+def load_ast_breed_classifier():
+    # Load fine-tuned AST model for breed classification
+    try:
+        return pipeline("audio-classification", model=HF_AST_REPO_ID)
+    except Exception as e:
+        st.warning(f"Could not load AST breed classifier: {e}")
         return None
 
 dog_detector = load_dog_detector()
-breed_classifier = load_breed_classifier()
+
+# Model selection dropdown
+selected_model_name = st.selectbox(
+    "Select Breed Classification Model",
+    options=list(BREED_MODEL_OPTIONS.keys()),
+    index=0  # Default to Random Forest
+)
+selected_model_type = BREED_MODEL_OPTIONS[selected_model_name]
 
 # File Uploader
 audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "ogg"])
@@ -93,36 +116,56 @@ if audio_file is not None:
         dog_confidence = scores.get('Dog', scores.get('Bark', 0.0))
         st.success(f"✅ **Dog Detected!** (Confidence: {dog_confidence:.2%})")
 
-        # Run breed classification if dog detected and model is loaded
-        if breed_classifier is not None:
-            with st.spinner("Identifying breed..."):
-                features = extract_mfcc_features(tmp_path)
+        # Run breed classification based on selected model
+        with st.spinner(f"Identifying breed using {selected_model_name}..."):
+            if selected_model_type == "random_forest":
+                # Load and run Random Forest model
+                rf_classifier = load_rf_breed_classifier()
+                if rf_classifier is not None:
+                    features = extract_mfcc_features(tmp_path)
+                    if features is not None:
+                        breed_pred = rf_classifier.predict(features)[0]
+                        breed_proba = rf_classifier.predict_proba(features)[0]
+                        breed_classes = rf_classifier.classes_
 
-                if features is not None:
-                    # Get prediction and probabilities
-                    breed_pred = breed_classifier.predict(features)[0]
-                    breed_proba = breed_classifier.predict_proba(features)[0]
-                    breed_classes = breed_classifier.classes_
+                        breed_display = breed_pred.replace('_', ' ').title()
+                        breed_confidence = max(breed_proba)
 
-                    # Format breed name nicely
+                        st.info(f"🐕 **Predicted Breed: {breed_display}** (Confidence: {breed_confidence:.2%})")
+
+                        with st.expander("See breed probabilities"):
+                            breed_results = sorted(
+                                zip(breed_classes, breed_proba),
+                                key=lambda x: x[1],
+                                reverse=True
+                            )
+                            for breed, prob in breed_results:
+                                breed_name = breed.replace('_', ' ').title()
+                                st.write(f"**{breed_name}:** {prob:.2%}")
+                                st.progress(prob)
+                else:
+                    st.warning("Random Forest breed classifier not available.")
+
+            elif selected_model_type == "ast":
+                # Load and run AST model
+                ast_classifier = load_ast_breed_classifier()
+                if ast_classifier is not None:
+                    ast_results = ast_classifier(tmp_path, top_k=100)
+
+                    breed_pred = ast_results[0]['label']
+                    breed_confidence = ast_results[0]['score']
                     breed_display = breed_pred.replace('_', ' ').title()
-                    breed_confidence = max(breed_proba)
 
                     st.info(f"🐕 **Predicted Breed: {breed_display}** (Confidence: {breed_confidence:.2%})")
 
-                    # Show breed probabilities
                     with st.expander("See breed probabilities"):
-                        breed_results = sorted(
-                            zip(breed_classes, breed_proba),
-                            key=lambda x: x[1],
-                            reverse=True
-                        )
-                        for breed, prob in breed_results:
-                            breed_name = breed.replace('_', ' ').title()
+                        for result in ast_results:
+                            breed_name = result['label'].replace('_', ' ').title()
+                            prob = result['score']
                             st.write(f"**{breed_name}:** {prob:.2%}")
                             st.progress(prob)
-        else:
-            st.warning("Breed classifier not available.")
+                else:
+                    st.warning("AST breed classifier not available.")
     else:
         st.error("🚫 **No Dog Detected.**")
 
