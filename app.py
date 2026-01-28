@@ -4,8 +4,16 @@ import os
 import numpy as np
 import librosa
 import joblib
+import logging
 from pathlib import Path
 from huggingface_hub import hf_hub_download, InferenceClient
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Hugging Face model repositories
 HF_DOG_DETECTOR_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
@@ -30,8 +38,17 @@ BREED_MODEL_OPTIONS = {
 @st.cache_resource
 def get_inference_client():
     """Get HuggingFace Inference Client (uses HF_TOKEN from secrets if available)."""
-    token = st.secrets.get("HF_TOKEN", None)
-    return InferenceClient(token=token)
+    try:
+        token = st.secrets.get("HF_TOKEN", None)
+        logger.info(f"HF_TOKEN loaded: {'Yes' if token else 'No'}")
+        if token:
+            logger.info(f"Token prefix: {token[:10]}...")
+    except Exception as e:
+        logger.warning(f"Could not read secrets: {e}")
+        token = None
+    client = InferenceClient(token=token)
+    logger.info(f"InferenceClient created: {client}")
+    return client
 
 
 # --- Audio Processing ---
@@ -102,45 +119,80 @@ def detect_dog_via_api(audio_path, client, max_retries=3):
     Includes retry logic for model cold starts.
     """
     import time
+    import traceback
     from huggingface_hub.utils import HfHubHTTPError
 
-    with open(audio_path, "rb") as f:
-        audio_bytes = f.read()
+    logger.info(f"Starting dog detection for: {audio_path}")
+
+    try:
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+        logger.info(f"Read audio file: {len(audio_bytes)} bytes")
+    except Exception as e:
+        logger.error(f"Failed to read audio file: {e}")
+        st.error(f"Failed to read audio file: {e}")
+        return False, 0.0, []
 
     last_error = None
     for attempt in range(max_retries):
         try:
+            logger.info(f"Attempt {attempt + 1}/{max_retries}: Calling audio_classification API")
+            logger.info(f"Model: {HF_DOG_DETECTOR_ID}")
+
             response = client.audio_classification(
                 audio=audio_bytes,
                 model=HF_DOG_DETECTOR_ID,
             )
 
+            logger.info(f"API response received. Type: {type(response)}")
+            logger.info(f"API response repr: {repr(response)}")
+
             # Ensure response is a list and handle empty/None responses
             if response is None:
+                logger.warning("Response is None")
                 st.warning("Dog detection returned no results")
                 return False, 0.0, []
 
             # Convert to list if it's a generator/iterator
-            response_list = list(response) if not isinstance(response, list) else response
+            logger.info(f"Converting response to list. Is list: {isinstance(response, list)}")
+            try:
+                response_list = list(response) if not isinstance(response, list) else response
+                logger.info(f"Response list length: {len(response_list)}")
+                if response_list:
+                    logger.info(f"First item type: {type(response_list[0])}")
+                    logger.info(f"First item repr: {repr(response_list[0])}")
+            except Exception as conv_error:
+                logger.error(f"Error converting response to list: {conv_error}")
+                logger.error(traceback.format_exc())
+                st.error(f"Error processing API response: {conv_error}")
+                return False, 0.0, []
 
             if not response_list:
+                logger.warning("Response list is empty")
                 st.warning("Dog detection returned empty results")
                 return False, 0.0, []
 
             # Convert API response to consistent format
             results = []
-            for r in response_list:
+            for i, r in enumerate(response_list):
+                logger.debug(f"Processing item {i}: type={type(r)}, repr={repr(r)}")
                 if hasattr(r, 'label') and hasattr(r, 'score'):
                     results.append({"label": r.label, "score": r.score})
                 elif isinstance(r, dict):
                     results.append({"label": r.get('label', ''), "score": r.get('score', 0.0)})
+                else:
+                    logger.warning(f"Unknown item format at index {i}: {type(r)}")
+
+            logger.info(f"Parsed {len(results)} results")
 
             if not results:
+                logger.warning("No results after parsing")
                 st.warning("Could not parse dog detection results")
                 return False, 0.0, []
 
             top_labels = [result['label'] for result in results[:5]]
             scores = {result['label']: result['score'] for result in results[:5]}
+            logger.info(f"Top labels: {top_labels}")
 
             is_detected = any(
                 keyword in label
@@ -148,16 +200,20 @@ def detect_dog_via_api(audio_path, client, max_retries=3):
                 for keyword in ['Dog', 'Bark', 'Puppy']
             )
             confidence = scores.get('Dog', scores.get('Bark', 0.0))
+            logger.info(f"Detection result: is_detected={is_detected}, confidence={confidence}")
 
             return is_detected, confidence, results
 
         except HfHubHTTPError as e:
             last_error = e
             error_str = str(e)
+            logger.error(f"HfHubHTTPError: {error_str}")
+            logger.error(traceback.format_exc())
             # Model is loading (cold start) - wait and retry
             if "loading" in error_str.lower() or "503" in error_str:
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 10  # 10s, 20s, 30s
+                    logger.info(f"Model loading, waiting {wait_time}s before retry")
                     st.info(f"Model is warming up... retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     continue
@@ -167,9 +223,12 @@ def detect_dog_via_api(audio_path, client, max_retries=3):
 
         except Exception as e:
             last_error = e
+            logger.error(f"Unexpected error: {type(e).__name__}: {e}")
+            logger.error(traceback.format_exc())
             st.error(f"Dog detection error: {type(e).__name__}: {e}")
             return False, 0.0, []
 
+    logger.error(f"All {max_retries} attempts failed. Last error: {last_error}")
     st.error(f"Dog detection failed after {max_retries} attempts: {last_error}")
     return False, 0.0, []
 
