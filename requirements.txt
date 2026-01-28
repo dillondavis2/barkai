@@ -1,4 +1,6 @@
 streamlit
+transformers
+torch
 scipy
 numpy
 librosa>=0.10.2

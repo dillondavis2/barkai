@@ -1,4 +1,5 @@
 import streamlit as st
+from transformers import pipeline
 import tempfile
 import os
 import numpy as np
@@ -79,7 +80,16 @@ def extract_mfcc_features(file_path):
         return None
 
 
-# --- Local Model Loaders (Random Forest only) ---
+# --- Local Model Loaders ---
+
+@st.cache_resource
+def load_dog_detector():
+    """Load MIT's AST model fine-tuned on AudioSet for dog detection (local)."""
+    logger.info("Loading dog detector model locally...")
+    model = pipeline("audio-classification", model=HF_DOG_DETECTOR_ID)
+    logger.info("Dog detector model loaded successfully")
+    return model
+
 
 @st.cache_resource
 def load_rf_breed_classifier():
@@ -111,127 +121,37 @@ def load_yt_rf_breed_classifier():
         return None
 
 
-# --- Dog Detection (via Inference API) ---
+# --- Dog Detection (Local) ---
 
-def detect_dog_via_api(audio_path, client, max_retries=3):
+def detect_dog(audio_path, detector):
     """
-    Run dog detection on audio file via HuggingFace Inference API.
+    Run dog detection on audio file using local model.
     Returns (is_detected, confidence, full_results)
-    Includes retry logic for model cold starts.
     """
-    import time
-    import traceback
-    from huggingface_hub.utils import HfHubHTTPError
-
     logger.info(f"Starting dog detection for: {audio_path}")
 
     try:
-        with open(audio_path, "rb") as f:
-            audio_bytes = f.read()
-        logger.info(f"Read audio file: {len(audio_bytes)} bytes")
+        results = detector(audio_path, top_k=100)
+        logger.info(f"Dog detection returned {len(results)} results")
+
+        top_labels = [result['label'] for result in results[:5]]
+        scores = {result['label']: result['score'] for result in results[:5]}
+        logger.info(f"Top labels: {top_labels}")
+
+        is_detected = any(
+            keyword in label
+            for label in top_labels
+            for keyword in ['Dog', 'Bark', 'Puppy']
+        )
+        confidence = scores.get('Dog', scores.get('Bark', 0.0))
+        logger.info(f"Detection result: is_detected={is_detected}, confidence={confidence}")
+
+        return is_detected, confidence, results
+
     except Exception as e:
-        logger.error(f"Failed to read audio file: {e}")
-        st.error(f"Failed to read audio file: {e}")
+        logger.error(f"Dog detection error: {type(e).__name__}: {e}")
+        st.error(f"Dog detection error: {e}")
         return False, 0.0, []
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Attempt {attempt + 1}/{max_retries}: Calling audio_classification API")
-            logger.info(f"Model: {HF_DOG_DETECTOR_ID}")
-
-            response = client.audio_classification(
-                audio=audio_bytes,
-                model=HF_DOG_DETECTOR_ID,
-            )
-
-            logger.info(f"API response received. Type: {type(response)}")
-            logger.info(f"API response repr: {repr(response)}")
-
-            # Ensure response is a list and handle empty/None responses
-            if response is None:
-                logger.warning("Response is None")
-                st.warning("Dog detection returned no results")
-                return False, 0.0, []
-
-            # Convert to list if it's a generator/iterator
-            logger.info(f"Converting response to list. Is list: {isinstance(response, list)}")
-            try:
-                response_list = list(response) if not isinstance(response, list) else response
-                logger.info(f"Response list length: {len(response_list)}")
-                if response_list:
-                    logger.info(f"First item type: {type(response_list[0])}")
-                    logger.info(f"First item repr: {repr(response_list[0])}")
-            except Exception as conv_error:
-                logger.error(f"Error converting response to list: {conv_error}")
-                logger.error(traceback.format_exc())
-                st.error(f"Error processing API response: {conv_error}")
-                return False, 0.0, []
-
-            if not response_list:
-                logger.warning("Response list is empty")
-                st.warning("Dog detection returned empty results")
-                return False, 0.0, []
-
-            # Convert API response to consistent format
-            results = []
-            for i, r in enumerate(response_list):
-                logger.debug(f"Processing item {i}: type={type(r)}, repr={repr(r)}")
-                if hasattr(r, 'label') and hasattr(r, 'score'):
-                    results.append({"label": r.label, "score": r.score})
-                elif isinstance(r, dict):
-                    results.append({"label": r.get('label', ''), "score": r.get('score', 0.0)})
-                else:
-                    logger.warning(f"Unknown item format at index {i}: {type(r)}")
-
-            logger.info(f"Parsed {len(results)} results")
-
-            if not results:
-                logger.warning("No results after parsing")
-                st.warning("Could not parse dog detection results")
-                return False, 0.0, []
-
-            top_labels = [result['label'] for result in results[:5]]
-            scores = {result['label']: result['score'] for result in results[:5]}
-            logger.info(f"Top labels: {top_labels}")
-
-            is_detected = any(
-                keyword in label
-                for label in top_labels
-                for keyword in ['Dog', 'Bark', 'Puppy']
-            )
-            confidence = scores.get('Dog', scores.get('Bark', 0.0))
-            logger.info(f"Detection result: is_detected={is_detected}, confidence={confidence}")
-
-            return is_detected, confidence, results
-
-        except HfHubHTTPError as e:
-            last_error = e
-            error_str = str(e)
-            logger.error(f"HfHubHTTPError: {error_str}")
-            logger.error(traceback.format_exc())
-            # Model is loading (cold start) - wait and retry
-            if "loading" in error_str.lower() or "503" in error_str:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 10  # 10s, 20s, 30s
-                    logger.info(f"Model loading, waiting {wait_time}s before retry")
-                    st.info(f"Model is warming up... retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
-            # Other HTTP error - don't retry
-            st.error(f"Dog detection API error: {type(e).__name__}: {e}")
-            return False, 0.0, []
-
-        except Exception as e:
-            last_error = e
-            logger.error(f"Unexpected error: {type(e).__name__}: {e}")
-            logger.error(traceback.format_exc())
-            st.error(f"Dog detection error: {type(e).__name__}: {e}")
-            return False, 0.0, []
-
-    logger.error(f"All {max_retries} attempts failed. Last error: {last_error}")
-    st.error(f"Dog detection failed after {max_retries} attempts: {last_error}")
-    return False, 0.0, []
 
 
 def display_dog_detection_results(results):
@@ -388,8 +308,11 @@ def main():
     st.title("🐶 Dog Bark Detector & Breed Classifier")
     st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
 
-    # Get inference client
+    # Get inference client (for AST breed classifiers)
     client = get_inference_client()
+
+    # Load dog detector locally (MIT model doesn't have free Inference API)
+    dog_detector = load_dog_detector()
 
     # Model selection dropdown
     selected_model_name = st.selectbox(
@@ -412,9 +335,9 @@ def main():
     tmp_path = save_audio_to_temp(audio_file)
 
     try:
-        # Dog detection via API
+        # Dog detection (local model)
         with st.spinner("Listening for barks..."):
-            is_detected, dog_confidence, detection_results = detect_dog_via_api(tmp_path, client)
+            is_detected, dog_confidence, detection_results = detect_dog(tmp_path, dog_detector)
 
         if is_detected:
             st.success(f"✅ **Dog Detected!** (Confidence: {dog_confidence:.2%})")
