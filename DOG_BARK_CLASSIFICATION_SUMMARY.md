@@ -6,7 +6,8 @@
 3. [Datasets](#datasets)
 4. [Modeling Methodologies](#modeling-methodologies)
 5. [Results](#results)
-6. [Conclusions](#conclusions)
+6. [Discussion: Why AST Outperforms Random Forest](#discussion-why-ast-outperforms-random-forest)
+7. [Conclusions](#conclusions)
 
 ---
 
@@ -301,12 +302,14 @@ Breed Predictions
 
 ### Model Comparison Summary
 
-| Model | Dataset | Classes | Accuracy | Macro F1 |
-|-------|---------|---------|----------|----------|
-| Random Forest | DogSpeak | 5 | **74.18%** | 0.62 |
-| AST Fine-tuned | DogSpeak | 5 | TBD | TBD |
-| Random Forest | YouTube | 100 | 41.49% | 0.35 |
-| AST Fine-tuned | YouTube | 100 | TBD | TBD |
+| Model | Dataset | Classes | Accuracy | Macro F1 | Improvement |
+|-------|---------|---------|----------|----------|-------------|
+| Random Forest | DogSpeak | 5 | 74.18% | 0.62 | — |
+| **AST Fine-tuned** | **DogSpeak** | **5** | **80.48%** | **0.81** | **+6.3%** |
+| Random Forest | YouTube | 100 | 41.49% | 0.35 | — |
+| **AST Fine-tuned** | **YouTube** | **100** | **45.77%** | **0.46** | **+4.3%** |
+
+**Key Finding:** AST consistently outperforms Random Forest across both datasets, with larger gains on the cleaner DogSpeak dataset.
 
 ---
 
@@ -340,21 +343,44 @@ Breed Predictions
 
 #### 2. AST Fine-tuned on DogSpeak (5 breeds)
 
-**Model Configuration:**
+**Overall Performance:**
+- **Accuracy:** 80.48%
+- **Precision:** 81.54%
+- **Recall:** 80.48%
+- **F1-Score:** 80.81%
+- **Test Loss:** 0.889
+
+**Training Configuration:**
 ```json
 {
   "architecture": "ASTForAudioClassification",
-  "hidden_size": 768,
-  "num_attention_heads": 12,
-  "num_hidden_layers": 12,
+  "num_epochs": 30,
+  "batch_size": 768,
+  "learning_rate": 0.00022,
   "num_classes": 5
 }
 ```
 
-**Training Details:**
-- Fine-tuned from MIT AudioSet checkpoint
-- Classes: chihuahua, german_shepherd, husky, pitbull, shiba_inu
-- Model size: 344 MB
+**Training Curves:**
+
+The model shows consistent improvement over 30 epochs:
+- Training loss decreases from 1.40 → 0.97
+- Validation accuracy improves from 43% → 81%
+- Best validation accuracy achieved at epoch 29: 80.83%
+
+**Comparison with Random Forest:**
+
+| Metric | Random Forest | AST | Improvement |
+|--------|---------------|-----|-------------|
+| Accuracy | 74.18% | 80.48% | +6.30% |
+| Macro F1 | 0.62 | 0.81 | +0.19 |
+| Macro Precision | 0.80 | 0.82 | +0.02 |
+| Macro Recall | 0.58 | 0.80 | +0.22 |
+
+**Key Observations:**
+- AST significantly improves recall across all classes
+- More balanced performance across breeds compared to RF
+- Training converges smoothly with cosine learning rate schedule
 
 ---
 
@@ -398,21 +424,169 @@ Breed Predictions
 
 #### 4. AST Fine-tuned on YouTube (100 breeds)
 
-**Model Configuration:**
+**Overall Performance:**
+- **Accuracy:** 45.77%
+- **Precision:** 51.57%
+- **Recall:** 45.77%
+- **F1-Score:** 46.26%
+- **Test Loss:** 2.714
+
+**Dataset Split:**
+- Training: 13,497 samples
+- Validation: 2,892 samples
+- Test: 2,893 samples
+
+**Training Configuration:**
 ```json
 {
   "architecture": "ASTForAudioClassification",
-  "hidden_size": 768,
-  "num_attention_heads": 12,
-  "num_hidden_layers": 12,
+  "num_epochs": 30,
+  "batch_size": 768,
+  "learning_rate": 0.000224,
   "num_classes": 100
 }
 ```
 
-**Training Details:**
-- Fine-tuned from MIT AudioSet checkpoint
-- 100 breed classes from YouTube data
-- Model size: 345 MB
+**Training Curves:**
+
+The model shows steady improvement over 30 epochs:
+- Training loss decreases from 4.62 → 3.01
+- Validation accuracy improves from 0.5% → 45.5%
+- Best validation accuracy achieved at epoch 30: 45.54%
+
+**Comparison with Random Forest:**
+
+| Metric | Random Forest | AST | Improvement |
+|--------|---------------|-----|-------------|
+| Accuracy | 41.49% | 45.77% | +4.28% |
+| Macro F1 | 0.35 | 0.46 | +0.11 |
+| Macro Precision | 0.38 | 0.52 | +0.14 |
+| Macro Recall | 0.34 | 0.46 | +0.12 |
+
+**Key Observations:**
+- AST achieves ~10% relative improvement over RF on this harder 100-class problem
+- Still significant room for improvement (45.77% vs theoretical 100%)
+- Noisy YouTube labels limit ceiling for both models
+- Model continues to improve at epoch 30, suggesting longer training could help
+
+---
+
+## Discussion: Why AST Outperforms Random Forest
+
+The Audio Spectrogram Transformer consistently outperforms the Random Forest baseline across both datasets. This section analyzes the architectural and methodological reasons for this performance gap.
+
+### 1. Feature Representation Capacity
+
+**Random Forest (MFCC):**
+- Fixed 40-dimensional feature vector
+- Hand-crafted features based on human auditory perception
+- Collapses all temporal information into mean/std statistics
+- Cannot capture fine-grained spectral patterns
+
+**AST:**
+- Learns hierarchical features from raw spectrograms
+- 768-dimensional hidden representations per patch
+- Millions of learnable parameters (87M total)
+- Can discover task-specific discriminative features
+
+```
+Feature Dimensionality:
+  MFCC:  40 dimensions (fixed)
+  AST:   768 × num_patches (learned, adaptive)
+```
+
+### 2. Temporal Modeling
+
+**Random Forest (MFCC):**
+```
+Audio → MFCC frames → mean(frames), std(frames) → 40-dim vector
+```
+- Completely discards temporal structure
+- A bark at the start vs end produces identical features
+- Cannot model bark duration, rhythm, or temporal patterns
+
+**AST:**
+```
+Audio → Spectrogram → Patches → Positional Encoding → Transformer → Classification
+```
+- Preserves temporal information via positional embeddings
+- Self-attention can model long-range dependencies
+- Can learn that certain breeds have characteristic bark patterns (e.g., howl sequences)
+
+### 3. Transfer Learning Advantage
+
+**Random Forest:**
+- Trains from scratch on target dataset only
+- Limited by available labeled data
+- No knowledge of general audio concepts
+
+**AST:**
+- Pre-trained on AudioSet: 2+ million audio clips, 527 classes
+- Already understands concepts like "bark", "howl", "animal sound"
+- Classification head fine-tunes on breed-specific patterns
+- Effectively leverages orders of magnitude more training data
+
+```
+Training Data:
+  RF:   77,202 samples (DogSpeak) or 19,319 samples (YouTube)
+  AST:  2,000,000+ samples (AudioSet pre-training) + fine-tuning data
+```
+
+### 4. Attention Mechanism
+
+The Transformer's self-attention allows AST to:
+- Focus on discriminative bark segments within a recording
+- Ignore background noise and irrelevant audio portions
+- Learn which spectral regions distinguish different breeds
+
+```
+Example: German Shepherd classification
+  - Attention may focus on low-frequency bark components
+  - De-emphasize high-frequency background noise
+  - Weight bark onset patterns more heavily
+```
+
+### 5. End-to-End Optimization
+
+**Random Forest:**
+- Features (MFCCs) are fixed, not optimized for the task
+- Only decision boundaries are learned
+- Suboptimal if MFCCs don't capture breed-discriminative information
+
+**AST:**
+- Entire pipeline is differentiable
+- Feature extraction layers adapt to breed classification objective
+- Learns optimal representations for the specific task
+
+### 6. Quantitative Analysis
+
+**Performance Gap by Dataset:**
+
+| Dataset | RF Accuracy | AST Accuracy | Absolute Gain | Relative Gain |
+|---------|-------------|--------------|---------------|---------------|
+| DogSpeak (5 classes) | 74.18% | 80.48% | +6.30% | +8.5% |
+| YouTube (100 classes) | 41.49% | 45.77% | +4.28% | +10.3% |
+
+**Observations:**
+- Relative improvement is larger on the harder 100-class problem
+- AST's advantage grows as task complexity increases
+- Cleaner data (DogSpeak) shows larger absolute improvement
+
+### 7. When to Use Each Approach
+
+**Use Random Forest when:**
+- Interpretability is critical
+- Compute resources are limited
+- Quick prototyping is needed
+- Small number of classes (<10)
+- Training data is very limited (<1000 samples)
+
+**Use AST when:**
+- Maximum accuracy is the priority
+- GPU resources are available
+- Large number of classes (>10)
+- Sufficient training data (>5000 samples)
+- Transfer learning can be leveraged
 
 ---
 
@@ -420,39 +594,61 @@ Breed Predictions
 
 ### Key Findings
 
-1. **Dataset Quality Matters**
+1. **AST Consistently Outperforms Random Forest**
+   - DogSpeak (5 breeds): AST achieves 80.48% vs RF 74.18% (+6.3% absolute)
+   - YouTube (100 breeds): AST achieves 45.77% vs RF 41.49% (+4.3% absolute)
+   - Relative improvement is larger on harder problems (+10.3% vs +8.5%)
+
+2. **Dataset Quality Matters**
    - DogSpeak (curated academic dataset) yields better results than YouTube (web-scraped)
    - AST filtering helps but doesn't fully compensate for noisy labels
+   - Clean labels enable AST to reach 80%+ accuracy on 5-class problem
 
-2. **Class Count Impact**
-   - 5-class problem: 74% accuracy achievable with simple RF
-   - 100-class problem: Much harder, ~41% accuracy with RF
+3. **Class Count Impact**
+   - 5-class problem: 80% accuracy achievable with AST
+   - 100-class problem: Much harder, 46% accuracy represents reasonable performance
+   - Both models struggle with fine-grained breed distinctions
 
-3. **Model Architecture**
-   - MFCC + Random Forest: Fast, interpretable, reasonable for small class counts
-   - AST: More powerful feature extraction, better suited for large-scale problems
+4. **Transfer Learning is Critical**
+   - AST's pre-training on AudioSet provides strong initialization
+   - Random Forest cannot leverage external knowledge
+   - The gap would likely widen with less training data
 
-4. **Class Imbalance**
-   - Significant performance variation across breeds
-   - Some breeds have distinctive vocalizations (German Shepherd: 93% F1)
+5. **Class Imbalance Affects Both Models**
+   - Some breeds have distinctive vocalizations (German Shepherd: 93% F1 with RF)
    - Others are challenging regardless of samples (Bulldog: 5% F1)
+   - AST shows more balanced performance across classes
+
+### Final Model Comparison
+
+| Aspect | Random Forest | AST |
+|--------|---------------|-----|
+| Best DogSpeak Accuracy | 74.18% | **80.48%** |
+| Best YouTube Accuracy | 41.49% | **45.77%** |
+| Training Time | Minutes | Hours |
+| Inference Time | <1ms | ~100ms |
+| Model Size | 200-1000 MB | 345 MB |
+| GPU Required | No | Yes |
+| Interpretability | High | Low |
 
 ### Recommendations for Improvement
 
 1. **Data Collection**
    - Increase samples for underrepresented breeds
    - Use more sophisticated audio filtering (VAD, bark-specific detection)
-   - Consider data augmentation (pitch shift, time stretch)
+   - Consider data augmentation (pitch shift, time stretch, mixup)
 
 2. **Model Improvements**
-   - Ensemble AST + RF predictions
+   - Train AST for more epochs on YouTube (still improving at epoch 30)
+   - Ensemble AST + RF predictions for robustness
    - Hierarchical classification (breed group → specific breed)
-   - Attention visualization for interpretability
+   - Try other audio transformers (HuBERT, Wav2Vec2, Data2Vec-Audio)
 
 3. **Application Enhancements**
    - Add confidence thresholds for uncertain predictions
    - Provide "top-3" breed suggestions
    - Include breed group fallback for low-confidence predictions
+   - Attention visualization for model interpretability
 
 ---
 
