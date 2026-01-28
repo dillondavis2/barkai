@@ -1,0 +1,117 @@
+Random Forest Dog Breed Classification Results
+Timestamp: 20260127_200847
+Label Strategy: directory names
+==================================================
+
+Dataset Shape: (19319, 40)
+Unique classes: [np.str_('airedale_terrier'), np.str_('akita'), np.str_('alaskan_malamute'), np.str_('american_staffordshire_terrier'), np.str_('anatolian_shepherd_dog'), np.str_('australian_cattle_dog'), np.str_('australian_shepherd'), np.str_('basenji'), np.str_('basset_hound'), np.str_('beagle'), np.str_('beauceron'), np.str_('belgian_malinois'), np.str_('bernese_mountain_dog'), np.str_('bichon_frise'), np.str_('biewer_terrier'), np.str_('bloodhound'), np.str_('border_collie'), np.str_('border_terrier'), np.str_('boston_terrier'), np.str_('boxer'), np.str_('boykin_spaniel'), np.str_('brittany'), np.str_('brussels_griffon'), np.str_('bull_terrier'), np.str_('bulldog'), np.str_('bullmastiff'), np.str_('cairn_terrier'), np.str_('cane_corso'), np.str_('cardigan_welsh_corgi'), np.str_('cavalier_king_charles_spaniel'), np.str_('chesapeake_bay_retriever'), np.str_('chihuahua'), np.str_('chinese_crested'), np.str_('chinese_shar_pei'), np.str_('chow_chow'), np.str_('cocker_spaniel'), np.str_('collie'), np.str_('coton_de_tulear'), np.str_('dachshund'), np.str_('dalmatian'), np.str_('doberman_pinscher'), np.str_('dogo_argentino'), np.str_('dogue_de_bordeaux'), np.str_('english_cocker_spaniel'), np.str_('english_setter'), np.str_('english_springer_spaniel'), np.str_('flat_coated_retriever'), np.str_('french_bulldog'), np.str_('german_shepherd_dog'), np.str_('german_shorthaired_pointer'), np.str_('german_wirehaired_pointer'), np.str_('giant_schnauzer'), np.str_('golden_retriever'), np.str_('great_dane'), np.str_('great_pyrenees'), np.str_('great_swiss_mountain_dog'), np.str_('havanese'), np.str_('irish_setter'), np.str_('irish_wolfhound'), np.str_('italian_greyhound'), np.str_('keeshond'), np.str_('labrador_retriever'), np.str_('lagotto_romagnolo'), np.str_('leonberger'), np.str_('lhasa_apso'), np.str_('maltese'), np.str_('mastiff'), np.str_('miniature_american_shepherd'), np.str_('miniature_pinscher'), np.str_('miniature_schnauzer'), np.str_('newfoundland'), np.str_('nova_scotia_duck_tolling_retriever'), np.str_('old_english_sheepdog'), np.str_('papillon'), np.str_('pekingese'), np.str_('pembroke_welsh_corgi'), np.str_('pomeranian'), np.str_('poodle'), np.str_('portuguese_water_dog'), np.str_('pug'), np.str_('rat_terrier'), np.str_('rhodesian_ridgeback'), np.str_('rottweiler'), np.str_('russell_terrier'), np.str_('saint_bernard'), np.str_('samoyed'), np.str_('scottish_terrier'), np.str_('shetland_sheepdog'), np.str_('shiba_inu'), np.str_('shih_tzu'), np.str_('siberian_husky'), np.str_('soft_coated_wheaten_terrier'), np.str_('staffordshire_bull_terrier'), np.str_('standard_schnauzer'), np.str_('vizsla'), np.str_('weimaraner'), np.str_('west_highland_white_terrier'), np.str_('whippet'), np.str_('wirehaired_pointing_griffon'), np.str_('yorkshire_terrier')]
+
+Accuracy: 0.4149
+
+Detailed Classification Report:
+                                    precision    recall  f1-score   support
+
+                  airedale_terrier       0.45      0.38      0.42        26
+                             akita       0.50      0.40      0.44        25
+                  alaskan_malamute       0.41      0.62      0.50       144
+    american_staffordshire_terrier       0.31      0.30      0.30        40
+            anatolian_shepherd_dog       0.10      0.08      0.09        13
+             australian_cattle_dog       0.33      0.08      0.12        13
+               australian_shepherd       0.20      0.16      0.18        38
+                           basenji       0.58      0.44      0.50        25
+                      basset_hound       0.65      0.73      0.69        33
+                            beagle       0.29      0.30      0.29        44
+                         beauceron       0.20      0.32      0.25        37
+                  belgian_malinois       0.33      0.46      0.39        37
+              bernese_mountain_dog       0.14      0.11      0.12        19
+                      bichon_frise       0.19      0.37      0.25        41
+                    biewer_terrier       0.50      0.50      0.50        16
+                        bloodhound       0.43      0.51      0.47        47
+                     border_collie       0.15      0.17      0.16        24
+                    border_terrier       0.30      0.14      0.19        21
+                    boston_terrier       0.33      0.39      0.36        23
+                             boxer       0.20      0.21      0.20        43
+                    boykin_spaniel       0.36      0.32      0.34        25
+                          brittany       0.43      0.48      0.46        27
+                  brussels_griffon       0.41      0.33      0.37        27
+                      bull_terrier       0.23      0.33      0.27        40
+                           bulldog       0.04      0.05      0.05       106
+                       bullmastiff       0.36      0.29      0.32        28
+                     cairn_terrier       0.55      0.44      0.49        25
+                        cane_corso       0.58      0.51      0.55        35
+              cardigan_welsh_corgi       0.48      0.31      0.38        32
+     cavalier_king_charles_spaniel       0.23      0.15      0.18        20
+          chesapeake_bay_retriever       0.09      0.06      0.07        17
+                         chihuahua       0.30      0.49      0.37        72
+                   chinese_crested       0.28      0.47      0.35        58
+                  chinese_shar_pei       0.33      0.23      0.27        22
+                         chow_chow       0.32      0.22      0.26        36
+                    cocker_spaniel       0.16      0.20      0.18        30
+                            collie       0.23      0.19      0.21        36
+                   coton_de_tulear       0.47      0.33      0.39        24
+                         dachshund       0.28      0.41      0.33        34
+                         dalmatian       0.45      0.23      0.30        22
+                 doberman_pinscher       0.65      0.38      0.48        29
+                    dogo_argentino       0.47      0.36      0.41        25
+                 dogue_de_bordeaux       0.29      0.18      0.22        22
+            english_cocker_spaniel       0.40      0.50      0.44        40
+                    english_setter       0.16      0.14      0.15        22
+          english_springer_spaniel       0.37      0.42      0.39        36
+             flat_coated_retriever       0.47      0.35      0.40        20
+                    french_bulldog       0.50      0.43      0.46        28
+               german_shepherd_dog       0.94      0.91      0.93       251
+        german_shorthaired_pointer       0.24      0.22      0.23        27
+         german_wirehaired_pointer       0.46      0.35      0.40        31
+                   giant_schnauzer       0.26      0.31      0.28        32
+                  golden_retriever       0.31      0.33      0.32        30
+                        great_dane       0.48      0.66      0.56        41
+                    great_pyrenees       0.27      0.20      0.23        15
+          great_swiss_mountain_dog       0.17      0.16      0.16        19
+                          havanese       0.53      0.31      0.39        26
+                      irish_setter       0.42      0.33      0.37        24
+                   irish_wolfhound       0.59      0.52      0.55        33
+                 italian_greyhound       0.27      0.25      0.26        36
+                          keeshond       0.56      0.24      0.33        21
+                labrador_retriever       0.38      0.60      0.47        78
+                 lagotto_romagnolo       0.25      0.16      0.19        19
+                        leonberger       0.64      0.44      0.52        16
+                        lhasa_apso       0.34      0.33      0.34        33
+                           maltese       0.50      0.50      0.50        38
+                           mastiff       0.33      0.25      0.29        28
+       miniature_american_shepherd       0.35      0.28      0.31        40
+                miniature_pinscher       0.52      0.38      0.44        37
+               miniature_schnauzer       0.21      0.19      0.20        31
+                      newfoundland       0.17      0.12      0.14        17
+nova_scotia_duck_tolling_retriever       0.42      0.23      0.29        22
+              old_english_sheepdog       0.20      0.08      0.11        26
+                          papillon       0.67      0.35      0.46        17
+                         pekingese       0.90      0.90      0.90       128
+              pembroke_welsh_corgi       0.69      0.61      0.65        54
+                        pomeranian       0.68      0.62      0.65        45
+                            poodle       0.34      0.30      0.32       128
+              portuguese_water_dog       0.48      0.37      0.42        27
+                               pug       0.09      0.08      0.09        96
+                       rat_terrier       0.44      0.22      0.30        18
+               rhodesian_ridgeback       0.54      0.43      0.48        30
+                        rottweiler       0.70      0.84      0.76       112
+                   russell_terrier       0.36      0.15      0.22        26
+                     saint_bernard       0.34      0.32      0.33        31
+                           samoyed       0.35      0.45      0.40        44
+                  scottish_terrier       0.55      0.29      0.38        21
+                 shetland_sheepdog       0.29      0.29      0.29        34
+                         shiba_inu       0.28      0.26      0.27        39
+                          shih_tzu       0.74      0.70      0.72        61
+                    siberian_husky       0.21      0.32      0.25        75
+       soft_coated_wheaten_terrier       0.60      0.40      0.48        30
+        staffordshire_bull_terrier       0.06      0.05      0.06        37
+                standard_schnauzer       0.13      0.13      0.13        23
+                            vizsla       0.50      0.19      0.28        21
+                        weimaraner       0.34      0.32      0.33        37
+       west_highland_white_terrier       0.53      0.27      0.36        30
+                           whippet       0.38      0.30      0.33        37
+       wirehaired_pointing_griffon       0.50      0.50      0.50        20
+                 yorkshire_terrier       0.45      0.36      0.40        25
+
+                          accuracy                           0.41      3864
+                         macro avg       0.38      0.34      0.35      3864
+                      weighted avg       0.43      0.41      0.41      3864

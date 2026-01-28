@@ -1,0 +1,24 @@
+Random Forest Dog Breed Classification Results
+Timestamp: 20260128_003941
+Label Strategy: filenames
+Bark Isolation: disabled
+Class Weights: balanced
+==================================================
+
+Dataset Shape: (77197, 40)
+Unique classes: [np.str_('chihuahua'), np.str_('gsd'), np.str_('husky'), np.str_('pitbull'), np.str_('shibainu')]
+
+Accuracy: 0.7371
+
+Detailed Classification Report:
+              precision    recall  f1-score   support
+
+   chihuahua       0.90      0.55      0.68      1631
+         gsd       0.82      0.34      0.48      1510
+       husky       0.73      0.92      0.82      7194
+     pitbull       0.90      0.29      0.44      1222
+    shibainu       0.69      0.77      0.72      3883
+
+    accuracy                           0.74     15440
+   macro avg       0.81      0.57      0.63     15440
+weighted avg       0.76      0.74      0.72     15440
