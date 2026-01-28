@@ -3,7 +3,8 @@ transformers
 torch
 scipy
 numpy
-librosa
+librosa>=0.10.2
+numba>=0.61.0
+llvmlite>=0.44.0
 joblib
-pathlib
 huggingface_hub
