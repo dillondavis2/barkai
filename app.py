@@ -1,9 +1,7 @@
 import streamlit as st
-from transformers import pipeline
 import tempfile
 import os
 import gc
-import torch
 import numpy as np
 import librosa
 import joblib
@@ -13,7 +11,7 @@ from huggingface_hub import hf_hub_download
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -38,10 +36,15 @@ BREED_MODEL_OPTIONS = {
 
 
 def clear_memory():
-    """Aggressively clear memory after unloading models."""
+    """Aggressively clear memory."""
     gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # Only import torch if needed, and clear its cache
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 # --- Audio Processing ---
@@ -71,69 +74,85 @@ def extract_mfcc_features(file_path):
         return None
 
 
-# --- Model Manager ---
-# Only one breed classifier is kept in memory at a time to stay within memory limits
+# --- Unified Model Manager ---
+# Only ONE model (either dog detector OR breed classifier) is in memory at a time
+# This is critical for staying within memory limits
 
-class BreedModelManager:
+class ModelManager:
     """
-    Manages breed classifier loading/unloading to prevent memory exhaustion.
-    Only one breed classifier is kept in memory at a time.
+    Manages ALL model loading/unloading to prevent memory exhaustion.
+    Only ONE model is kept in memory at a time (dog detector OR breed classifier).
     """
 
     def __init__(self):
         self._current_model = None
-        self._current_model_type = None
-
-    def get_model(self, model_type):
-        """
-        Get the breed classifier for the specified model type.
-        Unloads any previously loaded model first to free memory.
-        """
-        # If the requested model is already loaded, return it
-        if self._current_model_type == model_type and self._current_model is not None:
-            logger.info(f"Reusing cached model: {model_type}")
-            return self._current_model
-
-        # Unload current model before loading new one
-        self._unload_current_model()
-
-        # Load the requested model
-        logger.info(f"Loading breed classifier: {model_type}")
-        model = self._load_model(model_type)
-
-        if model is not None:
-            self._current_model = model
-            self._current_model_type = model_type
-
-        return model
+        self._current_model_id = None
 
     def _unload_current_model(self):
         """Unload the currently loaded model and free memory."""
         if self._current_model is not None:
-            logger.info(f"Unloading model: {self._current_model_type}")
-            # Delete the model
+            logger.info(f"Unloading model: {self._current_model_id}")
             del self._current_model
             self._current_model = None
-            self._current_model_type = None
-            # Aggressively clear memory
+            self._current_model_id = None
             clear_memory()
 
-    def _load_model(self, model_type):
-        """Load a specific model type."""
+    def get_dog_detector(self):
+        """Load and return the dog detector model."""
+        model_id = "dog_detector"
+
+        if self._current_model_id == model_id:
+            return self._current_model
+
+        # Unload any current model first
+        self._unload_current_model()
+
+        logger.info("Loading dog detector model...")
+        try:
+            # Import transformers only when needed
+            from transformers import pipeline
+            model = pipeline("audio-classification", model=HF_DOG_DETECTOR_ID)
+            self._current_model = model
+            self._current_model_id = model_id
+            logger.info("Dog detector loaded successfully")
+            return model
+        except Exception as e:
+            logger.error(f"Failed to load dog detector: {e}")
+            st.error(f"Failed to load dog detector: {e}")
+            return None
+
+    def get_breed_classifier(self, model_type):
+        """Load and return a breed classifier."""
+        model_id = f"breed_{model_type}"
+
+        if self._current_model_id == model_id:
+            return self._current_model
+
+        # Unload any current model first
+        self._unload_current_model()
+
+        logger.info(f"Loading breed classifier: {model_type}")
         try:
             if model_type == "random_forest":
-                return self._load_rf_model(HF_RF_REPO_ID, HF_RF_MODEL_FILENAME)
+                model = self._load_rf_model(HF_RF_REPO_ID, HF_RF_MODEL_FILENAME)
             elif model_type == "youtube_random_forest":
-                return self._load_rf_model(HF_YT_RF_REPO_ID, HF_YT_RF_MODEL_FILENAME)
+                model = self._load_rf_model(HF_YT_RF_REPO_ID, HF_YT_RF_MODEL_FILENAME)
             elif model_type == "ast":
-                return self._load_ast_model(HF_AST_REPO_ID)
+                model = self._load_ast_model(HF_AST_REPO_ID)
             elif model_type == "youtube_ast":
-                return self._load_ast_model(HF_YT_AST_REPO_ID)
+                model = self._load_ast_model(HF_YT_AST_REPO_ID)
             else:
                 logger.error(f"Unknown model type: {model_type}")
                 return None
+
+            self._current_model = model
+            self._current_model_id = model_id
+            logger.info(f"Breed classifier loaded: {model_type}")
+            return model
+
         except Exception as e:
-            logger.error(f"Error loading model {model_type}: {e}")
+            logger.error(f"Failed to load breed classifier: {e}")
+            st.error(f"Failed to load breed classifier: {e}")
             return None
 
     def _load_rf_model(self, repo_id, filename):
@@ -147,46 +166,41 @@ class BreedModelManager:
 
     def _load_ast_model(self, repo_id):
         """Load an AST model from HuggingFace Hub."""
+        from transformers import pipeline
         return pipeline("audio-classification", model=repo_id)
 
-
-def get_breed_model_manager():
-    """Get or create the breed model manager in session state."""
-    if 'breed_model_manager' not in st.session_state:
-        st.session_state.breed_model_manager = BreedModelManager()
-    return st.session_state.breed_model_manager
+    def unload_all(self):
+        """Explicitly unload all models."""
+        self._unload_current_model()
 
 
-# --- Dog Detector (always cached - required for all classifications) ---
-
-@st.cache_resource
-def load_dog_detector():
-    """
-    Load MIT's AST model fine-tuned on AudioSet for dog detection.
-    This is cached because it's always needed regardless of breed classifier choice.
-    """
-    logger.info("Loading dog detector model...")
-    model = pipeline("audio-classification", model=HF_DOG_DETECTOR_ID)
-    logger.info("Dog detector model loaded successfully")
-    return model
+def get_model_manager():
+    """Get or create the model manager in session state."""
+    if 'model_manager' not in st.session_state:
+        st.session_state.model_manager = ModelManager()
+    return st.session_state.model_manager
 
 
 # --- Dog Detection ---
 
-def detect_dog(audio_path, detector):
+def detect_dog(audio_path, model_manager):
     """
-    Run dog detection on audio file using local model.
-    Returns (is_detected, confidence, full_results)
+    Run dog detection on audio file.
+    Returns (is_detected, confidence, top_results)
     """
     logger.info(f"Starting dog detection for: {audio_path}")
 
+    detector = model_manager.get_dog_detector()
+    if detector is None:
+        return False, 0.0, []
+
     try:
-        results = detector(audio_path, top_k=100)
+        # Only get top 10 to reduce memory
+        results = detector(audio_path, top_k=10)
         logger.info(f"Dog detection returned {len(results)} results")
 
         top_labels = [result['label'] for result in results[:5]]
         scores = {result['label']: result['score'] for result in results[:5]}
-        logger.info(f"Top labels: {top_labels}")
 
         is_detected = any(
             keyword in label
@@ -194,19 +208,20 @@ def detect_dog(audio_path, detector):
             for keyword in ['Dog', 'Bark', 'Puppy']
         )
         confidence = scores.get('Dog', scores.get('Bark', 0.0))
-        logger.info(f"Detection result: is_detected={is_detected}, confidence={confidence}")
 
-        return is_detected, confidence, results
+        return is_detected, confidence, results[:5]
 
     except Exception as e:
-        logger.error(f"Dog detection error: {type(e).__name__}: {e}")
+        logger.error(f"Dog detection error: {e}")
         st.error(f"Dog detection error: {e}")
         return False, 0.0, []
 
 
 def display_dog_detection_results(results):
-    """Display detailed dog detection analysis as bar graph."""
-    with st.expander("See detailed dog detection analysis"):
+    """Display detailed dog detection analysis."""
+    if not results:
+        return
+    with st.expander("See dog detection details"):
         for result in results:
             st.write(f"**{result['label']}:** {result['score']:.2%}")
             st.progress(result['score'])
@@ -215,10 +230,7 @@ def display_dog_detection_results(results):
 # --- Breed Classification ---
 
 def classify_breed_with_rf(audio_path, classifier):
-    """
-    Classify breed using Random Forest model with MFCC features.
-    Returns (predicted_breed, confidence, sorted_results) or (None, None, None) on failure.
-    """
+    """Classify breed using Random Forest model with MFCC features."""
     features = extract_mfcc_features(audio_path)
     if features is None:
         return None, None, None
@@ -227,22 +239,21 @@ def classify_breed_with_rf(audio_path, classifier):
     breed_proba = classifier.predict_proba(features)[0]
     breed_classes = classifier.classes_
 
+    # Only keep top 10 results to save memory
     sorted_results = sorted(
         zip(breed_classes, breed_proba),
         key=lambda x: x[1],
         reverse=True
-    )
+    )[:10]
 
     return breed_pred, max(breed_proba), sorted_results
 
 
 def classify_breed_with_ast(audio_path, classifier):
-    """
-    Classify breed using AST model.
-    Returns (predicted_breed, confidence, results_list) or (None, None, None) on failure.
-    """
+    """Classify breed using AST model."""
     try:
-        results = classifier(audio_path, top_k=100)
+        # Only get top 10 to reduce memory
+        results = classifier(audio_path, top_k=10)
 
         if not results:
             return None, None, None
@@ -254,13 +265,13 @@ def classify_breed_with_ast(audio_path, classifier):
         return breed_pred, confidence, sorted_results
 
     except Exception as e:
-        logger.error(f"AST breed classification error: {type(e).__name__}: {e}")
+        logger.error(f"AST breed classification error: {e}")
         st.error(f"Breed classification error: {e}")
         return None, None, None
 
 
 def display_breed_results(breed_pred, confidence, sorted_results):
-    """Display breed classification results with progress bars."""
+    """Display breed classification results."""
     breed_display = breed_pred.replace('_', ' ').title()
     st.info(f"**Predicted Breed: {breed_display}** (Confidence: {confidence:.2%})")
 
@@ -271,22 +282,17 @@ def display_breed_results(breed_pred, confidence, sorted_results):
             st.progress(prob)
 
 
-def run_breed_classification(audio_path, model_type, model_name):
+def run_breed_classification(audio_path, model_type, model_name, model_manager):
     """Run breed classification based on selected model type."""
-    # Get the model manager (handles loading/unloading)
-    model_manager = get_breed_model_manager()
-
-    # Get the appropriate classifier (this will unload any previous model)
-    classifier = model_manager.get_model(model_type)
+    classifier = model_manager.get_breed_classifier(model_type)
 
     if classifier is None:
         st.warning(f"{model_name} not available.")
         return
 
-    # Classify based on model type
     if model_type in ["random_forest", "youtube_random_forest"]:
         breed_pred, confidence, sorted_results = classify_breed_with_rf(audio_path, classifier)
-    else:  # ast or youtube_ast
+    else:
         breed_pred, confidence, sorted_results = classify_breed_with_ast(audio_path, classifier)
 
     if breed_pred is None:
@@ -299,14 +305,15 @@ def run_breed_classification(audio_path, model_type, model_name):
 # --- Main App ---
 
 def main():
+    st.set_page_config(
+        page_title="Dog Bark Classifier",
+        page_icon="🐕",
+        layout="centered"
+    )
+
     st.title("Dog Bark Detector & Breed Classifier")
     st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
-
-    # Show memory optimization note
-    st.caption("Memory optimized: Only one breed classifier is loaded at a time.")
-
-    # Load dog detector (always needed, cached)
-    dog_detector = load_dog_detector()
+    st.caption("Memory optimized: Models are loaded on-demand and only one at a time.")
 
     # Model selection dropdown
     selected_model_name = st.selectbox(
@@ -320,6 +327,7 @@ def main():
     audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "ogg"])
 
     if audio_file is None:
+        st.info("Please upload an audio file to begin.")
         return
 
     # Display audio player
@@ -328,26 +336,35 @@ def main():
     # Save to temp file
     tmp_path = save_audio_to_temp(audio_file)
 
+    # Get model manager
+    model_manager = get_model_manager()
+
     try:
-        # Dog detection
+        # Step 1: Dog detection
         with st.spinner("Listening for barks..."):
-            is_detected, dog_confidence, detection_results = detect_dog(tmp_path, dog_detector)
+            is_detected, dog_confidence, detection_results = detect_dog(tmp_path, model_manager)
 
-        if is_detected:
-            st.success(f"**Dog Detected!** (Confidence: {dog_confidence:.2%})")
-
-            # Breed classification
-            with st.spinner(f"Identifying breed using {selected_model_name}..."):
-                run_breed_classification(tmp_path, selected_model_type, selected_model_name)
-        else:
+        if not is_detected:
             st.error("**No Dog Detected.**")
+            display_dog_detection_results(detection_results)
+            return
 
-        # Show detailed detection results
+        st.success(f"**Dog Detected!** (Confidence: {dog_confidence:.2%})")
         display_dog_detection_results(detection_results)
+
+        # Step 2: Breed classification
+        # Note: This will unload the dog detector to free memory
+        with st.spinner(f"Identifying breed using {selected_model_name}..."):
+            run_breed_classification(tmp_path, selected_model_type, selected_model_name, model_manager)
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        st.error(f"An error occurred: {e}")
 
     finally:
         # Clean up temp file
-        os.remove(tmp_path)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 if __name__ == "__main__":
