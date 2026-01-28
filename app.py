@@ -34,6 +34,11 @@ BREED_MODEL_OPTIONS = {
     "YouTube AST (Fine-tuned)": "youtube_ast"
 }
 
+# File limits
+MAX_FILE_SIZE_MB = 10  # Maximum upload size in MB
+MAX_AUDIO_DURATION_SEC = 60  # Maximum audio duration in seconds
+TARGET_SAMPLE_RATE = 16000  # Sample rate for processing
+
 
 def clear_memory():
     """Aggressively clear memory."""
@@ -49,12 +54,62 @@ def clear_memory():
 
 # --- Audio Processing ---
 
+def validate_audio_file(audio_file):
+    """
+    Validate uploaded audio file size.
+    Returns (is_valid, error_message).
+    """
+    # Check file size
+    file_size_mb = len(audio_file.getvalue()) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        return False, f"File too large: {file_size_mb:.1f}MB (max {MAX_FILE_SIZE_MB}MB)"
+    return True, None
+
+
+def validate_audio_duration(file_path):
+    """
+    Validate audio duration after saving to temp file.
+    Returns (is_valid, duration_sec, error_message).
+    """
+    try:
+        # Use librosa to get duration without loading entire file
+        duration = librosa.get_duration(path=file_path)
+        if duration > MAX_AUDIO_DURATION_SEC:
+            return False, duration, f"Audio too long: {duration:.1f}s (max {MAX_AUDIO_DURATION_SEC}s)"
+        if duration < 0.5:
+            return False, duration, f"Audio too short: {duration:.2f}s (min 0.5s)"
+        return True, duration, None
+    except Exception as e:
+        return False, 0, f"Could not read audio file: {e}"
+
+
 def save_audio_to_temp(audio_file):
     """Save uploaded audio file to a temporary file and return the path."""
     suffix = os.path.splitext(audio_file.name)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_file.write(audio_file.getvalue())
         return tmp_file.name
+
+
+def load_and_trim_audio(file_path, max_duration=None):
+    """
+    Load audio file, optionally trimming to max duration.
+    Returns (audio_array, sample_rate) or (None, None) on error.
+    """
+    try:
+        # Load with target sample rate
+        y, sr = librosa.load(file_path, sr=TARGET_SAMPLE_RATE)
+
+        # Trim to max duration if specified
+        if max_duration is not None:
+            max_samples = int(max_duration * sr)
+            if len(y) > max_samples:
+                y = y[:max_samples]
+
+        return y, sr
+    except Exception as e:
+        logger.error(f"Error loading audio: {e}")
+        return None, None
 
 
 def extract_mfcc_features(file_path):
@@ -323,11 +378,19 @@ def main():
     )
     selected_model_type = BREED_MODEL_OPTIONS[selected_model_name]
 
-    # File uploader
+    # File uploader with size limit info
+    st.caption(f"Max file size: {MAX_FILE_SIZE_MB}MB | Max duration: {MAX_AUDIO_DURATION_SEC}s")
     audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "ogg"])
 
     if audio_file is None:
         st.info("Please upload an audio file to begin.")
+        return
+
+    # Step 1: Validate file size (before saving to disk)
+    is_valid, error_msg = validate_audio_file(audio_file)
+    if not is_valid:
+        st.error(f"**{error_msg}**")
+        st.info("Please upload a smaller file. For long recordings, trim to the section with barking.")
         return
 
     # Display audio player
@@ -336,11 +399,20 @@ def main():
     # Save to temp file
     tmp_path = save_audio_to_temp(audio_file)
 
-    # Get model manager
-    model_manager = get_model_manager()
-
     try:
-        # Step 1: Dog detection
+        # Step 2: Validate audio duration
+        is_valid, duration, error_msg = validate_audio_duration(tmp_path)
+        if not is_valid:
+            st.error(f"**{error_msg}**")
+            st.info("Please upload a shorter audio clip containing dog barking.")
+            return
+
+        st.caption(f"Audio duration: {duration:.1f}s")
+
+        # Get model manager
+        model_manager = get_model_manager()
+
+        # Step 3: Dog detection
         with st.spinner("Listening for barks..."):
             is_detected, dog_confidence, detection_results = detect_dog(tmp_path, model_manager)
 
@@ -352,7 +424,7 @@ def main():
         st.success(f"**Dog Detected!** (Confidence: {dog_confidence:.2%})")
         display_dog_detection_results(detection_results)
 
-        # Step 2: Breed classification
+        # Step 4: Breed classification
         # Note: This will unload the dog detector to free memory
         with st.spinner(f"Identifying breed using {selected_model_name}..."):
             run_breed_classification(tmp_path, selected_model_type, selected_model_name, model_manager)
@@ -363,8 +435,11 @@ def main():
 
     finally:
         # Clean up temp file
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass  # Ignore cleanup errors
 
 
 if __name__ == "__main__":
