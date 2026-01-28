@@ -110,13 +110,34 @@ def detect_dog_via_api(audio_path, client, max_retries=3):
     last_error = None
     for attempt in range(max_retries):
         try:
-            results = client.audio_classification(
+            response = client.audio_classification(
                 audio=audio_bytes,
                 model=HF_DOG_DETECTOR_ID,
             )
 
+            # Ensure response is a list and handle empty/None responses
+            if response is None:
+                st.warning("Dog detection returned no results")
+                return False, 0.0, []
+
+            # Convert to list if it's a generator/iterator
+            response_list = list(response) if not isinstance(response, list) else response
+
+            if not response_list:
+                st.warning("Dog detection returned empty results")
+                return False, 0.0, []
+
             # Convert API response to consistent format
-            results = [{"label": r.label, "score": r.score} for r in results]
+            results = []
+            for r in response_list:
+                if hasattr(r, 'label') and hasattr(r, 'score'):
+                    results.append({"label": r.label, "score": r.score})
+                elif isinstance(r, dict):
+                    results.append({"label": r.get('label', ''), "score": r.get('score', 0.0)})
+
+            if not results:
+                st.warning("Could not parse dog detection results")
+                return False, 0.0, []
 
             top_labels = [result['label'] for result in results[:5]]
             scores = {result['label']: result['score'] for result in results[:5]}
@@ -200,16 +221,31 @@ def classify_breed_with_ast_api(audio_path, model_id, client, max_retries=3):
     last_error = None
     for attempt in range(max_retries):
         try:
-            results = client.audio_classification(
+            response = client.audio_classification(
                 audio=audio_bytes,
                 model=model_id,
             )
 
-            if not results:
+            # Ensure response is a list and handle empty/None responses
+            if response is None:
+                return None, None, None
+
+            # Convert to list if it's a generator/iterator
+            response_list = list(response) if not isinstance(response, list) else response
+
+            if not response_list:
                 return None, None, None
 
             # Convert API response to consistent format
-            results = [{"label": r.label, "score": r.score} for r in results]
+            results = []
+            for r in response_list:
+                if hasattr(r, 'label') and hasattr(r, 'score'):
+                    results.append({"label": r.label, "score": r.score})
+                elif isinstance(r, dict):
+                    results.append({"label": r.get('label', ''), "score": r.get('score', 0.0)})
+
+            if not results:
+                return None, None, None
 
             breed_pred = results[0]['label']
             confidence = results[0]['score']
