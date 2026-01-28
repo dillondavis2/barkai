@@ -1,10 +1,9 @@
 streamlit
-transformers
-torch
 scipy
 numpy
 librosa>=0.10.2
 numba>=0.61.0
 llvmlite>=0.44.0
 joblib
-huggingface_hub
+huggingface_hub>=0.20.0
+scikit-learn

@@ -1,14 +1,14 @@
 import streamlit as st
-from transformers import pipeline
 import tempfile
 import os
 import numpy as np
 import librosa
 import joblib
 from pathlib import Path
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, InferenceClient
 
-# Hugging Face model repositories for breed classifiers
+# Hugging Face model repositories
+HF_DOG_DETECTOR_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
 HF_RF_REPO_ID = "dllndvs/dogspeak-breed-classifier"
 HF_RF_MODEL_FILENAME = "random_forest_model.joblib"
 HF_AST_REPO_ID = "dllndvs/dogspeak-ast-breed-classifier"
@@ -24,6 +24,15 @@ BREED_MODEL_OPTIONS = {
     "YouTube Random Forest (MFCC features)": "youtube_random_forest",
     "YouTube AST (Fine-tuned)": "youtube_ast"
 }
+
+# --- Inference Client ---
+
+@st.cache_resource
+def get_inference_client():
+    """Get HuggingFace Inference Client (uses HF_TOKEN from secrets if available)."""
+    token = st.secrets.get("HF_TOKEN", None)
+    return InferenceClient(token=token)
+
 
 # --- Audio Processing ---
 
@@ -52,13 +61,7 @@ def extract_mfcc_features(file_path):
         return None
 
 
-# --- Model Loaders (Cached) ---
-
-@st.cache_resource
-def load_dog_detector():
-    """Load MIT's AST model fine-tuned on AudioSet for dog detection."""
-    return pipeline("audio-classification", model="MIT/ast-finetuned-audioset-10-10-0.4593")
-
+# --- Local Model Loaders (Random Forest only) ---
 
 @st.cache_resource
 def load_rf_breed_classifier():
@@ -72,16 +75,6 @@ def load_rf_breed_classifier():
         return joblib.load(model_path)
     except Exception as e:
         st.warning(f"Could not load Random Forest breed classifier: {e}")
-        return None
-
-
-@st.cache_resource
-def load_ast_breed_classifier():
-    """Load fine-tuned AST model for breed classification."""
-    try:
-        return pipeline("audio-classification", model=HF_AST_REPO_ID)
-    except Exception as e:
-        st.warning(f"Could not load AST breed classifier: {e}")
         return None
 
 
@@ -100,35 +93,40 @@ def load_yt_rf_breed_classifier():
         return None
 
 
-@st.cache_resource
-def load_yt_ast_breed_classifier():
-    """Load YouTube fine-tuned AST model for breed classification."""
-    try:
-        return pipeline("audio-classification", model=HF_YT_AST_REPO_ID)
-    except Exception as e:
-        st.warning(f"Could not load YouTube AST breed classifier: {e}")
-        return None
+# --- Dog Detection (via Inference API) ---
 
-
-# --- Dog Detection ---
-
-def detect_dog(audio_path, detector):
+def detect_dog_via_api(audio_path, client):
     """
-    Run dog detection on audio file.
+    Run dog detection on audio file via HuggingFace Inference API.
     Returns (is_detected, confidence, full_results)
     """
-    results = detector(audio_path, top_k=100)
-    top_labels = [result['label'] for result in results[:5]]
-    scores = {result['label']: result['score'] for result in results[:5]}
+    try:
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
 
-    is_detected = any(
-        keyword in label
-        for label in top_labels
-        for keyword in ['Dog', 'Bark', 'Puppy']
-    )
-    confidence = scores.get('Dog', scores.get('Bark', 0.0))
+        results = client.audio_classification(
+            audio=audio_bytes,
+            model=HF_DOG_DETECTOR_ID,
+        )
 
-    return is_detected, confidence, results
+        # Convert API response to consistent format
+        results = [{"label": r.label, "score": r.score} for r in results]
+
+        top_labels = [result['label'] for result in results[:5]]
+        scores = {result['label']: result['score'] for result in results[:5]}
+
+        is_detected = any(
+            keyword in label
+            for label in top_labels
+            for keyword in ['Dog', 'Bark', 'Puppy']
+        )
+        confidence = scores.get('Dog', scores.get('Bark', 0.0))
+
+        return is_detected, confidence, results
+
+    except Exception as e:
+        st.error(f"Dog detection API error: {e}")
+        return False, 0.0, []
 
 
 def display_dog_detection_results(results):
@@ -143,7 +141,7 @@ def display_dog_detection_results(results):
 
 def classify_breed_with_rf(audio_path, classifier):
     """
-    Classify breed using Random Forest model with MFCC features.
+    Classify breed using Random Forest model with MFCC features (local).
     Returns (predicted_breed, confidence, sorted_results) or (None, None, None) on failure.
     """
     features = extract_mfcc_features(audio_path)
@@ -163,20 +161,35 @@ def classify_breed_with_rf(audio_path, classifier):
     return breed_pred, max(breed_proba), sorted_results
 
 
-def classify_breed_with_ast(audio_path, classifier):
+def classify_breed_with_ast_api(audio_path, model_id, client):
     """
-    Classify breed using AST model.
+    Classify breed using AST model via HuggingFace Inference API.
     Returns (predicted_breed, confidence, results_list) or (None, None, None) on failure.
     """
-    results = classifier(audio_path, top_k=100)
-    if not results:
+    try:
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        results = client.audio_classification(
+            audio=audio_bytes,
+            model=model_id,
+        )
+
+        if not results:
+            return None, None, None
+
+        # Convert API response to consistent format
+        results = [{"label": r.label, "score": r.score} for r in results]
+
+        breed_pred = results[0]['label']
+        confidence = results[0]['score']
+        sorted_results = [(r['label'], r['score']) for r in results]
+
+        return breed_pred, confidence, sorted_results
+
+    except Exception as e:
+        st.error(f"Breed classification API error: {e}")
         return None, None, None
-
-    breed_pred = results[0]['label']
-    confidence = results[0]['score']
-    sorted_results = [(r['label'], r['score']) for r in results]
-
-    return breed_pred, confidence, sorted_results
 
 
 def display_breed_results(breed_pred, confidence, sorted_results):
@@ -191,24 +204,33 @@ def display_breed_results(breed_pred, confidence, sorted_results):
             st.progress(prob)
 
 
-def run_breed_classification(audio_path, model_type, model_name):
+def run_breed_classification(audio_path, model_type, model_name, client):
     """Run breed classification based on selected model type."""
-    # Model type to loader and classifier function mapping
-    model_config = {
-        "random_forest": (load_rf_breed_classifier, classify_breed_with_rf),
-        "ast": (load_ast_breed_classifier, classify_breed_with_ast),
-        "youtube_random_forest": (load_yt_rf_breed_classifier, classify_breed_with_rf),
-        "youtube_ast": (load_yt_ast_breed_classifier, classify_breed_with_ast),
-    }
+    breed_pred, confidence, sorted_results = None, None, None
 
-    loader, classify_fn = model_config[model_type]
-    classifier = loader()
+    if model_type == "random_forest":
+        classifier = load_rf_breed_classifier()
+        if classifier is None:
+            st.warning(f"{model_name} not available.")
+            return
+        breed_pred, confidence, sorted_results = classify_breed_with_rf(audio_path, classifier)
 
-    if classifier is None:
-        st.warning(f"{model_name} not available.")
-        return
+    elif model_type == "youtube_random_forest":
+        classifier = load_yt_rf_breed_classifier()
+        if classifier is None:
+            st.warning(f"{model_name} not available.")
+            return
+        breed_pred, confidence, sorted_results = classify_breed_with_rf(audio_path, classifier)
 
-    breed_pred, confidence, sorted_results = classify_fn(audio_path, classifier)
+    elif model_type == "ast":
+        breed_pred, confidence, sorted_results = classify_breed_with_ast_api(
+            audio_path, HF_AST_REPO_ID, client
+        )
+
+    elif model_type == "youtube_ast":
+        breed_pred, confidence, sorted_results = classify_breed_with_ast_api(
+            audio_path, HF_YT_AST_REPO_ID, client
+        )
 
     if breed_pred is None:
         st.warning("Could not classify breed.")
@@ -223,8 +245,8 @@ def main():
     st.title("🐶 Dog Bark Detector & Breed Classifier")
     st.write("Upload an audio file to check if it contains a dog barking and identify the breed.")
 
-    # Load dog detector
-    dog_detector = load_dog_detector()
+    # Get inference client
+    client = get_inference_client()
 
     # Model selection dropdown
     selected_model_name = st.selectbox(
@@ -247,16 +269,16 @@ def main():
     tmp_path = save_audio_to_temp(audio_file)
 
     try:
-        # Dog detection
+        # Dog detection via API
         with st.spinner("Listening for barks..."):
-            is_detected, dog_confidence, detection_results = detect_dog(tmp_path, dog_detector)
+            is_detected, dog_confidence, detection_results = detect_dog_via_api(tmp_path, client)
 
         if is_detected:
             st.success(f"✅ **Dog Detected!** (Confidence: {dog_confidence:.2%})")
 
             # Breed classification
             with st.spinner(f"Identifying breed using {selected_model_name}..."):
-                run_breed_classification(tmp_path, selected_model_type, selected_model_name)
+                run_breed_classification(tmp_path, selected_model_type, selected_model_name, client)
         else:
             st.error("🚫 **No Dog Detected.**")
 
